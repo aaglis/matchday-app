@@ -1,4 +1,4 @@
-import { Tabs } from 'expo-router';
+import { Redirect, Tabs } from 'expo-router';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -6,9 +6,10 @@ import { MatchdayTheme } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 
 export default function TabLayout() {
-  const { user } = useAuth();
+  const { loading, user } = useAuth();
 
-  if (!user) return null;
+  if (loading) return null;
+  if (!user) return <Redirect href="/" />;
 
   return (
     <Tabs

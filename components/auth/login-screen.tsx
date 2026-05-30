@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { MatchdayTheme } from '@/constants/theme';
-import { changeEmail, resendVerificationEmail } from '@/lib/matchday-api';
+import { resendVerificationEmail } from '@/lib/matchday-api';
 import { BackgroundOrbs } from './background-orbs';
 import { authStyles as s } from './styles';
 
@@ -88,12 +88,6 @@ function LoginForm({
   const [password, setPassword] = useState('');
   const [resending, setResending] = useState(false);
   const [resendDone, setResendDone] = useState(false);
-  const [showChangeEmail, setShowChangeEmail] = useState(false);
-  const [changePassword, setChangePassword] = useState('');
-  const [newEmail, setNewEmail] = useState('');
-  const [changing, setChanging] = useState(false);
-  const [changeError, setChangeError] = useState<string | null>(null);
-  const [changeDone, setChangeDone] = useState(false);
 
   const isUnverified = authError === 'EMAIL_NOT_VERIFIED';
   const canSubmit = email.trim().length > 0 && password.length >= 6 && !authLoading;
@@ -114,21 +108,6 @@ function LoginForm({
       setResendDone(false);
     } finally {
       setResending(false);
-    }
-  };
-
-  const submitChangeEmail = async () => {
-    if (!email.trim() || !changePassword || !newEmail.trim() || changing) return;
-    setChanging(true);
-    setChangeError(null);
-    try {
-      await changeEmail(email.trim(), changePassword, newEmail.trim());
-      setChangeDone(true);
-      setShowChangeEmail(false);
-    } catch (e) {
-      setChangeError(e instanceof Error ? e.message : 'Erro ao alterar e-mail.');
-    } finally {
-      setChanging(false);
     }
   };
 
@@ -192,14 +171,10 @@ function LoginForm({
                 <Text style={ls.unverifiedText}>
                   Sua conta ainda não foi confirmada. Verifique sua caixa de entrada ou reenvie o e-mail de confirmação.
                 </Text>
-                {resendDone || changeDone ? (
+                {resendDone ? (
                   <View style={ls.resendSuccess}>
                     <Ionicons name="checkmark-circle" size={14} color="#166534" />
-                    <Text style={ls.resendSuccessText}>
-                      {changeDone
-                        ? 'E-mail alterado! Verifique a nova caixa de entrada.'
-                        : 'E-mail reenviado! Verifique sua caixa de entrada.'}
-                    </Text>
+                    <Text style={ls.resendSuccessText}>E-mail reenviado! Verifique sua caixa de entrada.</Text>
                   </View>
                 ) : (
                   <Pressable
@@ -216,72 +191,9 @@ function LoginForm({
                   </Pressable>
                 )}
 
-                {!resendDone && !changeDone && (
-                  <>
-                    <Pressable
-                      style={ls.changeEmailToggle}
-                      onPress={() => {
-                        setShowChangeEmail((v) => !v);
-                        setChangeError(null);
-                        setChangePassword('');
-                        setNewEmail('');
-                      }}
-                    >
-                      <Feather name="edit-2" size={13} color="#92400e" />
-                      <Text style={ls.changeEmailToggleText}>
-                        {showChangeEmail ? 'Cancelar alteração' : 'E-mail errado? Alterar aqui'}
-                      </Text>
-                    </Pressable>
-
-                    {showChangeEmail && (
-                      <View style={ls.changeEmailForm}>
-                        <View style={ls.changeEmailField}>
-                          <Feather name="lock" size={14} color="#92400e" />
-                          <TextInput
-                            placeholder="Sua senha atual"
-                            placeholderTextColor="#b45309"
-                            secureTextEntry
-                            style={ls.changeEmailInput}
-                            value={changePassword}
-                            onChangeText={setChangePassword}
-                            editable={!changing}
-                            autoComplete="password"
-                          />
-                        </View>
-                        <View style={ls.changeEmailField}>
-                          <Feather name="mail" size={14} color="#92400e" />
-                          <TextInput
-                            placeholder="Novo e-mail"
-                            placeholderTextColor="#b45309"
-                            style={ls.changeEmailInput}
-                            value={newEmail}
-                            onChangeText={setNewEmail}
-                            editable={!changing}
-                            keyboardType="email-address"
-                            autoCapitalize="none"
-                            autoComplete="email"
-                            onSubmitEditing={submitChangeEmail}
-                          />
-                        </View>
-                        {changeError ? (
-                          <Text style={ls.changeEmailError}>{changeError}</Text>
-                        ) : null}
-                        <Pressable
-                          style={[ls.changeEmailBtn, (!changePassword || !newEmail.trim() || changing) && ls.resendBtnDisabled]}
-                          disabled={!changePassword || !newEmail.trim() || changing}
-                          onPress={submitChangeEmail}
-                        >
-                          {changing
-                            ? <ActivityIndicator size="small" color="#92400e" />
-                            : <Feather name="check" size={14} color="#92400e" />}
-                          <Text style={ls.resendBtnText}>
-                            {changing ? 'Alterando...' : 'Confirmar novo e-mail'}
-                          </Text>
-                        </Pressable>
-                      </View>
-                    )}
-                  </>
-                )}
+                {!resendDone ? (
+                  <Text style={ls.unverifiedHint}>Se o e-mail estiver errado, crie uma nova conta com o endereço correto.</Text>
+                ) : null}
               </View>
             ) : authError ? (
               <Text style={s.errorText}>{authError}</Text>
@@ -349,37 +261,5 @@ const ls = StyleSheet.create({
   resendBtnText: { color: '#92400e', fontSize: 13, fontWeight: '700' },
   resendSuccess: { alignItems: 'center', flexDirection: 'row', gap: 6 },
   resendSuccessText: { color: '#166534', fontSize: 13, fontWeight: '600' },
-  changeEmailToggle: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 6,
-    paddingVertical: 2,
-  },
-  changeEmailToggleText: { color: '#92400e', fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' },
-  changeEmailForm: { gap: 10, marginTop: 2 },
-  changeEmailField: {
-    alignItems: 'center',
-    backgroundColor: '#fef9ee',
-    borderColor: '#fde68a',
-    borderRadius: 12,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 8,
-    minHeight: 46,
-    paddingHorizontal: 12,
-  },
-  changeEmailInput: { color: '#78350f', flex: 1, fontSize: 14 },
-  changeEmailError: { color: '#b91c1c', fontSize: 12, fontWeight: '600' },
-  changeEmailBtn: {
-    alignItems: 'center',
-    backgroundColor: '#fef3c7',
-    borderColor: '#fde68a',
-    borderRadius: 12,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 8,
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
+  unverifiedHint: { color: '#78350f', fontSize: 12, fontWeight: '600', lineHeight: 17 },
 });

@@ -9,6 +9,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,12 +19,17 @@ import { Fonts, MatchdayTheme } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import {
   type Competition,
-  getOrgCompetition,
+  getOrganizationFeed,
   getOrgFull,
   listCompetitions,
   type OrgFull,
+  type OrganizationFeed,
+  type OrganizationFeedMatch,
+  submitOrganizationBet,
   setOrgCompetition,
 } from '@/lib/matchday-api';
+
+type OrgTab = 'palpites' | 'ranking' | 'membros';
 
 export default function OrganizationDetailScreen() {
   const params = useLocalSearchParams<{ id?: string; name?: string }>();
@@ -35,8 +41,12 @@ export default function OrganizationDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [competition, setCompetition] = useState<Competition | null>(null);
   const [competitions, setCompetitions] = useState<Competition[]>([]);
+  const [feed, setFeed] = useState<OrganizationFeed | null>(null);
+  const [betDrafts, setBetDrafts] = useState<Record<string, { home: string; away: string }>>({});
+  const [savingBetId, setSavingBetId] = useState<string | null>(null);
   const [fabOpen, setFabOpen] = useState(false);
   const [compModalOpen, setCompModalOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<OrgTab>('palpites');
   const fabAnim = useRef(new Animated.Value(0)).current;
 
   const myRole = org?.members.find((m) => m.userId === user?.id)?.role ?? 'member';
@@ -46,14 +56,16 @@ export default function OrganizationDetailScreen() {
     if (!orgId) return;
     setError(null);
     try {
-      const [full, compResult, comps] = await Promise.all([
+      const [full, feedResult, comps] = await Promise.all([
         getOrgFull(orgId),
-        getOrgCompetition(orgId).catch(() => ({ competition: null })),
+        getOrganizationFeed(orgId),
         listCompetitions().catch(() => [] as Competition[]),
       ]);
       setOrg(full);
-      setCompetition(compResult.competition);
+      setFeed(feedResult);
+      setCompetition(feedResult.competition);
       setCompetitions(comps);
+      setBetDrafts(createBetDrafts(feedResult.matches));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Não foi possível carregar a organização.');
     } finally {
@@ -72,6 +84,44 @@ export default function OrganizationDetailScreen() {
   const closeFab = () => {
     Animated.spring(fabAnim, { toValue: 0, useNativeDriver: true, tension: 120, friction: 8 }).start();
     setFabOpen(false);
+  };
+
+  const updateDraft = (matchId: string, side: 'home' | 'away', value: string) => {
+    const numeric = value.replace(/[^0-9]/g, '').slice(0, 2);
+    setBetDrafts((current) => ({
+      ...current,
+      [matchId]: {
+        home: current[matchId]?.home ?? '',
+        away: current[matchId]?.away ?? '',
+        [side]: numeric,
+      },
+    }));
+  };
+
+  const saveBet = async (matchId: string) => {
+    if (!orgId) return;
+
+    const draft = betDrafts[matchId];
+    const predictedHomeScore = Number.parseInt(draft?.home ?? '', 10);
+    const predictedAwayScore = Number.parseInt(draft?.away ?? '', 10);
+
+    if (!Number.isInteger(predictedHomeScore) || !Number.isInteger(predictedAwayScore)) {
+      Alert.alert('Palpite', 'Informe os dois placares antes de salvar.');
+      return;
+    }
+
+    setSavingBetId(matchId);
+    try {
+      await submitOrganizationBet(orgId, matchId, { predictedHomeScore, predictedAwayScore });
+      const nextFeed = await getOrganizationFeed(orgId);
+      setFeed(nextFeed);
+      setCompetition(nextFeed.competition);
+      setBetDrafts(createBetDrafts(nextFeed.matches));
+    } catch (e) {
+      Alert.alert('Palpite', e instanceof Error ? e.message : 'Não foi possível salvar seu palpite.');
+    } finally {
+      setSavingBetId(null);
+    }
   };
 
   if (!orgId) return null;
@@ -109,9 +159,30 @@ export default function OrganizationDetailScreen() {
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
-              <OrgHeader org={org} isAdmin={isAdmin} myRole={myRole} />
-              <CompetitionCard competition={competition} />
-              <MembersSection members={org.members} currentUserId={user?.id} />
+              <LeagueTabs
+                active={activeTab}
+                memberCount={org.members.length}
+                openMatches={feed?.matches.filter((match) => !match.bettingLocked).length ?? 0}
+                rankingCount={feed?.ranking.length ?? 0}
+                onChange={setActiveTab}
+              />
+
+              {activeTab === 'palpites' ? (
+                <>
+                  <CompetitionCard competition={competition} />
+                  <PredictionsSection
+                    feed={feed}
+                    drafts={betDrafts}
+                    savingBetId={savingBetId}
+                    onChangeDraft={updateDraft}
+                    onSaveBet={saveBet}
+                  />
+                </>
+              ) : activeTab === 'ranking' ? (
+                <RankingSection ranking={feed?.ranking ?? []} currentUserId={user?.id} />
+              ) : (
+                <MembersSection members={org.members} currentUserId={user?.id} />
+              )}
             </ScrollView>
 
             {isAdmin && (
@@ -161,7 +232,7 @@ export default function OrganizationDetailScreen() {
                   competitions={competitions}
                   current={competition}
                   onClose={() => setCompModalOpen(false)}
-                  onChanged={(c) => { setCompetition(c); setCompModalOpen(false); }}
+                  onChanged={(c) => { setCompetition(c); setCompModalOpen(false); void load(); }}
                 />
               </>
             )}
@@ -172,21 +243,45 @@ export default function OrganizationDetailScreen() {
   );
 }
 
-function OrgHeader({ org, isAdmin, myRole }: { org: OrgFull; isAdmin: boolean; myRole: string }) {
+function LeagueTabs({
+  active,
+  memberCount,
+  openMatches,
+  rankingCount,
+  onChange,
+}: {
+  active: OrgTab;
+  memberCount: number;
+  openMatches: number;
+  rankingCount: number;
+  onChange: (tab: OrgTab) => void;
+}) {
+  const tabs: { icon: keyof typeof Ionicons.glyphMap; id: OrgTab; label: string; meta: string }[] = [
+    { icon: 'football-outline', id: 'palpites', label: 'Palpites', meta: `${openMatches} abertos` },
+    { icon: 'podium-outline', id: 'ranking', label: 'Ranking', meta: `${rankingCount} jogadores` },
+    { icon: 'people-outline', id: 'membros', label: 'Membros', meta: `${memberCount}/10` },
+  ];
+
   return (
-    <View style={s.orgHeader}>
-      <View style={s.orgIconLg}>
-        <Ionicons name="people" size={28} color={MatchdayTheme.colors.white} />
-      </View>
-      <View style={s.orgHeaderMeta}>
-        <Text style={s.orgName}>{org.name}</Text>
-        <Text style={s.orgSlug}>/{org.slug}</Text>
-      </View>
-      <View style={[s.roleBadge, isAdmin && s.roleBadgeAdmin]}>
-        <Text style={[s.roleBadgeText, isAdmin && s.roleBadgeTextAdmin]}>
-          {myRole === 'owner' ? 'Dono' : isAdmin ? 'Admin' : 'Membro'}
-        </Text>
-      </View>
+    <View style={s.tabsCard}>
+      {tabs.map((tab) => {
+        const selected = active === tab.id;
+        return (
+          <Pressable
+            key={tab.id}
+            style={[s.tabButton, selected && s.tabButtonActive]}
+            onPress={() => onChange(tab.id)}
+          >
+            <Ionicons
+              name={tab.icon}
+              size={18}
+              color={selected ? MatchdayTheme.colors.white : MatchdayTheme.colors.blue800}
+            />
+            <Text style={[s.tabLabel, selected && s.tabLabelActive]}>{tab.label}</Text>
+            <Text style={[s.tabMeta, selected && s.tabMetaActive]}>{tab.meta}</Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -211,6 +306,160 @@ function CompetitionCard({ competition }: { competition: Competition | null }) {
         </View>
       ) : (
         <Text style={s.emptyCompText}>Nenhuma competição configurada ainda.</Text>
+      )}
+    </View>
+  );
+}
+
+function PredictionsSection({
+  feed,
+  drafts,
+  savingBetId,
+  onChangeDraft,
+  onSaveBet,
+}: {
+  feed: OrganizationFeed | null;
+  drafts: Record<string, { home: string; away: string }>;
+  savingBetId: string | null;
+  onChangeDraft: (matchId: string, side: 'home' | 'away', value: string) => void;
+  onSaveBet: (matchId: string) => void;
+}) {
+  if (!feed?.competition) {
+    return (
+      <View style={s.card}>
+        <View style={s.cardHeader}>
+          <Text style={s.cardTitle}>Palpites</Text>
+          <Ionicons name="football-outline" size={17} color={MatchdayTheme.colors.blue800} />
+        </View>
+        <Text style={s.cardSubtitle}>Configure uma competição para liberar os palpites desta liga.</Text>
+      </View>
+    );
+  }
+
+  if (!feed.round || feed.matches.length === 0) {
+    return (
+      <View style={s.card}>
+        <View style={s.cardHeader}>
+          <Text style={s.cardTitle}>Palpites</Text>
+          <Ionicons name="football-outline" size={17} color={MatchdayTheme.colors.blue800} />
+        </View>
+        <Text style={s.cardSubtitle}>Ainda não há rodada com partidas cadastradas para esta competição.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={s.card}>
+      <View style={s.cardHeader}>
+        <View>
+          <Text style={s.cardTitle}>Palpites</Text>
+          <Text style={s.cardSubtitle}>{feed.round.name} · {roundStatusLabel(feed.round.status)}</Text>
+        </View>
+        <View style={s.roundBadge}>
+          <Text style={s.roundBadgeText}>R{feed.round.number}</Text>
+        </View>
+      </View>
+
+      <View style={s.matchList}>
+        {feed.matches.map((match) => {
+          const draft = drafts[match.id] ?? { home: '', away: '' };
+          const locked = match.bettingLocked;
+          const saving = savingBetId === match.id;
+
+          return (
+            <View key={match.id} style={s.matchRow}>
+              <View style={s.matchHeader}>
+                <Text style={s.matchDate}>{formatMatchDate(match.scheduledAt)}</Text>
+                <View style={[s.matchStatusPill, locked ? s.matchStatusLocked : s.matchStatusOpen]}>
+                  <Text style={[s.matchStatusText, locked ? s.matchStatusTextLocked : s.matchStatusTextOpen]}>
+                    {locked ? 'Fechado' : 'Aberto'}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={s.teamsRow}>
+                <Text style={s.teamName} numberOfLines={1}>{match.homeTeamShortName ?? match.homeTeamName}</Text>
+                <Text style={s.versus}>x</Text>
+                <Text style={[s.teamName, s.teamNameRight]} numberOfLines={1}>{match.awayTeamShortName ?? match.awayTeamName}</Text>
+              </View>
+
+              <View style={s.betRow}>
+                <TextInput
+                  value={draft.home}
+                  onChangeText={(value) => onChangeDraft(match.id, 'home', value)}
+                  editable={!locked && !saving}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  placeholder="-"
+                  placeholderTextColor={MatchdayTheme.colors.slate300}
+                  style={[s.scoreInput, locked && s.scoreInputLocked]}
+                />
+                <Text style={s.scoreSeparator}>:</Text>
+                <TextInput
+                  value={draft.away}
+                  onChangeText={(value) => onChangeDraft(match.id, 'away', value)}
+                  editable={!locked && !saving}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  placeholder="-"
+                  placeholderTextColor={MatchdayTheme.colors.slate300}
+                  style={[s.scoreInput, locked && s.scoreInputLocked]}
+                />
+                <Pressable
+                  style={[s.saveBetBtn, (locked || saving) && s.saveBetBtnDisabled]}
+                  disabled={locked || saving}
+                  onPress={() => onSaveBet(match.id)}
+                >
+                  {saving ? (
+                    <ActivityIndicator size="small" color={MatchdayTheme.colors.white} />
+                  ) : (
+                    <Text style={s.saveBetText}>{match.bet ? 'Atualizar' : 'Salvar'}</Text>
+                  )}
+                </Pressable>
+              </View>
+
+              {match.status === 'finished' ? (
+                <Text style={s.matchResult}>
+                  Final: {match.homeScore ?? '-'} x {match.awayScore ?? '-'} · {match.bet ? `${match.bet.points} pts` : 'sem palpite'}
+                </Text>
+              ) : match.bet ? (
+                <Text style={s.matchResult}>Seu palpite: {match.bet.predictedHomeScore} x {match.bet.predictedAwayScore}</Text>
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function RankingSection({ ranking, currentUserId }: { ranking: OrganizationFeed['ranking']; currentUserId?: string }) {
+  return (
+    <View style={s.card}>
+      <View style={s.cardHeader}>
+        <Text style={s.cardTitle}>Ranking</Text>
+        <Ionicons name="podium" size={17} color={MatchdayTheme.colors.gold400} />
+      </View>
+      {ranking.length === 0 ? (
+        <Text style={s.cardSubtitle}>O ranking aparece assim que a liga tiver membros.</Text>
+      ) : (
+        <View style={s.rankingList}>
+          {ranking.map((entry) => {
+            const isMe = entry.userId === currentUserId;
+            return (
+              <View key={entry.userId} style={[s.rankingRow, isMe && s.rankingRowMe]}>
+                <View style={s.rankingPosition}>
+                  <Text style={s.rankingPositionText}>{entry.position}</Text>
+                </View>
+                <View style={s.rankingMeta}>
+                  <Text style={s.rankingName} numberOfLines={1}>{entry.user.name ?? entry.user.email}</Text>
+                  <Text style={s.rankingStats}>{entry.exactScores} exatos · {entry.correctOutcomes} resultados</Text>
+                </View>
+                <Text style={s.rankingPoints}>{entry.totalPoints}</Text>
+              </View>
+            );
+          })}
+        </View>
       )}
     </View>
   );
@@ -355,6 +604,35 @@ function CompetitionModal({
   );
 }
 
+function createBetDrafts(matches: OrganizationFeedMatch[]) {
+  return Object.fromEntries(
+    matches.map((match) => [
+      match.id,
+      {
+        home: match.bet ? String(match.bet.predictedHomeScore) : '',
+        away: match.bet ? String(match.bet.predictedAwayScore) : '',
+      },
+    ]),
+  );
+}
+
+function formatMatchDate(value: string) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'short',
+  }).format(new Date(value));
+}
+
+function roundStatusLabel(status: NonNullable<OrganizationFeed['round']>['status']) {
+  if (status === 'finished') return 'finalizada';
+  if (status === 'live') return 'em andamento';
+  if (status === 'locked') return 'fechada';
+  if (status === 'open') return 'aberta';
+  return 'sem partidas';
+}
+
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: MatchdayTheme.colors.night },
   shell: { flex: 1 },
@@ -366,25 +644,77 @@ const s = StyleSheet.create({
   retryBtn: { backgroundColor: MatchdayTheme.colors.blue800, borderRadius: MatchdayTheme.radii.pill, paddingHorizontal: 20, paddingVertical: 10 },
   retryBtnText: { color: MatchdayTheme.colors.white, fontFamily: Fonts.sans, fontSize: 14, fontWeight: '700' },
   content: { gap: 16, padding: 16, paddingBottom: 48 },
-  orgHeader: { alignItems: 'center', backgroundColor: MatchdayTheme.colors.blue900, borderRadius: MatchdayTheme.radii.xl, flexDirection: 'row', gap: 14, padding: 18 },
-  orgIconLg: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: MatchdayTheme.radii.pill, height: 52, justifyContent: 'center', width: 52 },
-  orgHeaderMeta: { flex: 1 },
-  orgName: { color: MatchdayTheme.colors.white, fontFamily: Fonts.display, fontSize: 22, fontWeight: '900', textTransform: 'uppercase' },
-  orgSlug: { color: MatchdayTheme.colors.sky200, fontFamily: Fonts.sans, fontSize: 13, marginTop: 2 },
-  roleBadge: { backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: MatchdayTheme.radii.pill, paddingHorizontal: 12, paddingVertical: 6 },
-  roleBadgeAdmin: { backgroundColor: MatchdayTheme.colors.lime300 },
-  roleBadgeText: { color: MatchdayTheme.colors.sky200, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800', textTransform: 'uppercase' },
-  roleBadgeTextAdmin: { color: MatchdayTheme.colors.slate900 },
+  tabsCard: {
+    backgroundColor: MatchdayTheme.colors.surfaceElevated,
+    borderColor: 'rgba(12,74,110,0.08)',
+    borderRadius: MatchdayTheme.radii.xl,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    padding: 8,
+    ...MatchdayTheme.shadows.soft,
+  },
+  tabButton: {
+    alignItems: 'center',
+    backgroundColor: MatchdayTheme.colors.surface,
+    borderColor: 'rgba(12,74,110,0.08)',
+    borderRadius: 16,
+    borderWidth: 1,
+    flex: 1,
+    gap: 3,
+    minHeight: 78,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+  },
+  tabButtonActive: { backgroundColor: MatchdayTheme.colors.blue800, borderColor: MatchdayTheme.colors.blue800 },
+  tabLabel: { color: MatchdayTheme.colors.blue900, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '900' },
+  tabLabelActive: { color: MatchdayTheme.colors.white },
+  tabMeta: { color: MatchdayTheme.colors.slate500, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '800', textAlign: 'center' },
+  tabMetaActive: { color: MatchdayTheme.colors.sky200 },
   card: { backgroundColor: MatchdayTheme.colors.surfaceElevated, borderColor: 'rgba(12,74,110,0.08)', borderRadius: MatchdayTheme.radii.xl, borderWidth: 1, gap: 12, padding: 18, ...MatchdayTheme.shadows.soft },
   cardHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   cardTitle: { color: MatchdayTheme.colors.blue900, fontFamily: Fonts.display, fontSize: 20, fontWeight: '900', textTransform: 'uppercase' },
   cardSubtitle: { color: MatchdayTheme.colors.slate500, fontFamily: Fonts.sans, fontSize: 13, lineHeight: 19 },
+  roundBadge: { alignItems: 'center', backgroundColor: MatchdayTheme.colors.blue900, borderRadius: MatchdayTheme.radii.pill, height: 38, justifyContent: 'center', width: 38 },
+  roundBadgeText: { color: MatchdayTheme.colors.white, fontFamily: Fonts.display, fontSize: 13, fontWeight: '900' },
   countChip: { backgroundColor: MatchdayTheme.colors.surface, borderColor: 'rgba(12,74,110,0.10)', borderRadius: MatchdayTheme.radii.pill, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4 },
   countChipText: { color: MatchdayTheme.colors.blue800, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
   currentComp: { alignItems: 'center', flexDirection: 'row', gap: 10 },
   currentCompName: { color: MatchdayTheme.colors.blue900, fontFamily: Fonts.sans, fontSize: 15, fontWeight: '700' },
   currentCompSub: { color: MatchdayTheme.colors.slate500, fontFamily: Fonts.sans, fontSize: 12, marginTop: 2 },
   emptyCompText: { color: MatchdayTheme.colors.slate500, fontFamily: Fonts.sans, fontSize: 13 },
+  matchList: { gap: 12 },
+  matchRow: { backgroundColor: MatchdayTheme.colors.surface, borderColor: 'rgba(12,74,110,0.08)', borderRadius: 18, borderWidth: 1, gap: 10, padding: 12 },
+  matchHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  matchDate: { color: MatchdayTheme.colors.slate500, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
+  matchStatusPill: { borderRadius: MatchdayTheme.radii.pill, paddingHorizontal: 9, paddingVertical: 4 },
+  matchStatusOpen: { backgroundColor: '#ecfccb' },
+  matchStatusLocked: { backgroundColor: MatchdayTheme.colors.slate200 },
+  matchStatusText: { fontFamily: Fonts.sans, fontSize: 10, fontWeight: '900', textTransform: 'uppercase' },
+  matchStatusTextOpen: { color: '#365314' },
+  matchStatusTextLocked: { color: MatchdayTheme.colors.slate700 },
+  teamsRow: { alignItems: 'center', flexDirection: 'row', gap: 8 },
+  teamName: { color: MatchdayTheme.colors.blue900, flex: 1, fontFamily: Fonts.sans, fontSize: 14, fontWeight: '800' },
+  teamNameRight: { textAlign: 'right' },
+  versus: { color: MatchdayTheme.colors.slate500, fontFamily: Fonts.display, fontSize: 14, fontWeight: '900' },
+  betRow: { alignItems: 'center', flexDirection: 'row', gap: 8 },
+  scoreInput: { backgroundColor: MatchdayTheme.colors.white, borderColor: 'rgba(12,74,110,0.16)', borderRadius: 12, borderWidth: 1, color: MatchdayTheme.colors.blue900, fontFamily: Fonts.display, fontSize: 20, fontWeight: '900', height: 46, textAlign: 'center', width: 52 },
+  scoreInputLocked: { backgroundColor: MatchdayTheme.colors.slate100, color: MatchdayTheme.colors.slate500 },
+  scoreSeparator: { color: MatchdayTheme.colors.blue900, fontFamily: Fonts.display, fontSize: 18, fontWeight: '900' },
+  saveBetBtn: { alignItems: 'center', backgroundColor: MatchdayTheme.colors.blue800, borderRadius: MatchdayTheme.radii.pill, flex: 1, height: 44, justifyContent: 'center' },
+  saveBetBtnDisabled: { backgroundColor: MatchdayTheme.colors.slate300 },
+  saveBetText: { color: MatchdayTheme.colors.white, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '900' },
+  matchResult: { color: MatchdayTheme.colors.slate500, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '700' },
+  rankingList: { gap: 9 },
+  rankingRow: { alignItems: 'center', backgroundColor: MatchdayTheme.colors.surface, borderColor: 'rgba(12,74,110,0.08)', borderRadius: 16, borderWidth: 1, flexDirection: 'row', gap: 10, padding: 12 },
+  rankingRowMe: { backgroundColor: '#f7fee7', borderColor: 'rgba(101,163,13,0.32)' },
+  rankingPosition: { alignItems: 'center', backgroundColor: MatchdayTheme.colors.blue900, borderRadius: MatchdayTheme.radii.pill, height: 34, justifyContent: 'center', width: 34 },
+  rankingPositionText: { color: MatchdayTheme.colors.white, fontFamily: Fonts.display, fontSize: 13, fontWeight: '900' },
+  rankingMeta: { flex: 1 },
+  rankingName: { color: MatchdayTheme.colors.blue900, fontFamily: Fonts.sans, fontSize: 14, fontWeight: '800' },
+  rankingStats: { color: MatchdayTheme.colors.slate500, fontFamily: Fonts.sans, fontSize: 11, marginTop: 2 },
+  rankingPoints: { color: MatchdayTheme.colors.blue900, fontFamily: Fonts.display, fontSize: 24, fontWeight: '900' },
   list: { gap: 10 },
   memberRow: { alignItems: 'center', backgroundColor: MatchdayTheme.colors.surface, borderColor: 'rgba(12,74,110,0.08)', borderRadius: 16, borderWidth: 1, flexDirection: 'row', gap: 10, padding: 12 },
   memberAvatar: { alignItems: 'center', backgroundColor: MatchdayTheme.colors.blue900, borderRadius: MatchdayTheme.radii.pill, height: 38, justifyContent: 'center', width: 38 },

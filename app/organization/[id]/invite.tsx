@@ -1,4 +1,4 @@
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -115,7 +115,7 @@ function InviteCodeSection({ slug, orgName }: { slug: string; orgName: string })
     <View style={s.card}>
       <Text style={s.cardTitle}>Código da liga</Text>
       <Text style={s.cardSubtitle}>
-        Compartilhe o código abaixo. Qualquer pessoa pode entrar em "Organizações → Código".
+        Compartilhe o código abaixo. Qualquer pessoa pode entrar em &quot;Organizações → Código&quot;.
       </Text>
       <View style={s.codeBox}>
         <Text style={s.codeText}>{slug}</Text>

@@ -18,6 +18,7 @@ type AuthContextValue = {
   signIn: (payload: { email: string; password: string; rememberMe: boolean }) => Promise<void>;
   signOut: () => Promise<void>;
   signUp: (payload: { name: string; email: string; password: string; callbackURL?: string }) => Promise<void>;
+  updateUser: (patch: Partial<User>) => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -44,7 +45,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
       const prev = sessionRef.current;
       const sameUser = prev?.user?.id === next?.user?.id;
       const sameSession = prev?.session?.id === next?.session?.id;
-      if (!sameUser || !sameSession) {
+      const sameUserData =
+        prev?.user?.email === next?.user?.email &&
+        prev?.user?.name === next?.user?.name &&
+        prev?.user?.image === next?.user?.image &&
+        prev?.user?.emailVerified === next?.user?.emailVerified;
+      if (!sameUser || !sameSession || !sameUserData) {
         sessionRef.current = next;
         setSession(next);
       }
@@ -80,6 +86,18 @@ export function AuthProvider({ children }: PropsWithChildren) {
     await refreshSession();
   }, [refreshSession]);
 
+  const updateUser = useCallback((patch: Partial<User>) => {
+    const current = sessionRef.current;
+    if (!current?.user) return;
+
+    const next = {
+      ...current,
+      user: { ...current.user, ...patch },
+    };
+    sessionRef.current = next;
+    setSession(next);
+  }, []);
+
   const value = useMemo(
     () => ({
       loading,
@@ -88,9 +106,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signIn,
       signOut,
       signUp,
+      updateUser,
       user: session?.user ?? null,
     }),
-    [loading, refreshSession, session, signIn, signOut, signUp],
+    [loading, refreshSession, session, signIn, signOut, signUp, updateUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
