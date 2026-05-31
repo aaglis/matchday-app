@@ -336,14 +336,33 @@ function PredictionsSection({
     );
   }
 
-  if (!feed.round || feed.matches.length === 0) {
+  if (!feed.round) {
     return (
       <View style={s.card}>
         <View style={s.cardHeader}>
           <Text style={s.cardTitle}>Palpites</Text>
           <Ionicons name="football-outline" size={17} color={MatchdayTheme.colors.blue800} />
         </View>
-        <Text style={s.cardSubtitle}>Ainda não há rodada com partidas cadastradas para esta competição.</Text>
+        <Text style={s.cardSubtitle}>
+          Competição configurada. Assim que uma rodada abrir, os jogos aparecem aqui para você palpitar.
+        </Text>
+      </View>
+    );
+  }
+
+  if (feed.matches.length === 0) {
+    return (
+      <View style={s.card}>
+        <View style={s.cardHeader}>
+          <View>
+            <Text style={s.cardTitle}>Palpites</Text>
+            <Text style={s.cardSubtitle}>{feed.round.name} · {roundStatusLabel(feed.round.status)}</Text>
+          </View>
+          <View style={s.roundBadge}>
+            <Text style={s.roundBadgeText}>R{feed.round.number}</Text>
+          </View>
+        </View>
+        <Text style={s.cardSubtitle}>Esta rodada ainda não tem partidas cadastradas. Volte mais tarde.</Text>
       </View>
     );
   }

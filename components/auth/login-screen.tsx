@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { MatchdayTheme } from '@/constants/theme';
-import { resendVerificationEmail } from '@/lib/matchday-api';
+import { requestPasswordReset, resendVerificationEmail } from '@/lib/matchday-api';
 import { BackgroundOrbs } from './background-orbs';
 import { authStyles as s } from './styles';
 
@@ -88,6 +88,9 @@ function LoginForm({
   const [password, setPassword] = useState('');
   const [resending, setResending] = useState(false);
   const [resendDone, setResendDone] = useState(false);
+  const [resetSending, setResetSending] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetDone, setResetDone] = useState(false);
 
   const isUnverified = authError === 'EMAIL_NOT_VERIFIED';
   const canSubmit = email.trim().length > 0 && password.length >= 6 && !authLoading;
@@ -108,6 +111,25 @@ function LoginForm({
       setResendDone(false);
     } finally {
       setResending(false);
+    }
+  };
+
+  const requestReset = async () => {
+    if (resetSending || resetDone) return;
+    setResetError(null);
+    if (!email.trim()) {
+      setResetError('Informe seu e-mail acima para receber o link de redefinição.');
+      return;
+    }
+    setResetSending(true);
+    try {
+      await requestPasswordReset(email.trim());
+      setResetDone(true);
+    } catch {
+      // Do not reveal whether the account exists.
+      setResetDone(true);
+    } finally {
+      setResetSending(false);
     }
   };
 
@@ -217,6 +239,20 @@ function LoginForm({
             >
               <Text style={s.submitButtonText}>{authLoading ? 'Entrando...' : 'Entrar'}</Text>
             </Pressable>
+
+            {resetDone ? (
+              <View style={ls.resetSuccess}>
+                <Ionicons name="checkmark-circle" size={14} color="#166534" />
+                <Text style={ls.resetSuccessText}>Se existir uma conta com esse e-mail, enviamos um link para redefinir a senha.</Text>
+              </View>
+            ) : (
+              <Pressable disabled={resetSending} onPress={requestReset} style={ls.forgotLink}>
+                {resetSending
+                  ? <ActivityIndicator size="small" color={MatchdayTheme.colors.blue700} />
+                  : <Text style={ls.forgotLinkText}>Esqueci minha senha</Text>}
+              </Pressable>
+            )}
+            {resetError ? <Text style={s.errorText}>{resetError}</Text> : null}
           </View>
         </View>
 
@@ -262,4 +298,17 @@ const ls = StyleSheet.create({
   resendSuccess: { alignItems: 'center', flexDirection: 'row', gap: 6 },
   resendSuccessText: { color: '#166534', fontSize: 13, fontWeight: '600' },
   unverifiedHint: { color: '#78350f', fontSize: 12, fontWeight: '600', lineHeight: 17 },
+  forgotLink: { alignItems: 'center', paddingVertical: 4 },
+  forgotLinkText: { color: MatchdayTheme.colors.blue700, fontSize: 14, fontWeight: '700' },
+  resetSuccess: {
+    alignItems: 'center',
+    backgroundColor: '#f0fdf4',
+    borderColor: '#bbf7d0',
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    padding: 12,
+  },
+  resetSuccessText: { color: '#166534', flex: 1, fontSize: 13, fontWeight: '600', lineHeight: 18 },
 });

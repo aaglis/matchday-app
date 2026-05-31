@@ -204,23 +204,25 @@ export default function ArenaScreen() {
           </View>
         </View>
 
-        <View style={s.previewCard}>
-          <View style={s.previewHeader}>
-            <View>
-              <Text style={s.previewEyebrow}>Preview</Text>
-              <Text style={s.previewTitle}>Modais gamificados</Text>
+        {__DEV__ ? (
+          <View style={s.previewCard}>
+            <View style={s.previewHeader}>
+              <View>
+                <Text style={s.previewEyebrow}>Preview · DEV</Text>
+                <Text style={s.previewTitle}>Modais gamificados</Text>
+              </View>
+              <Ionicons name="game-controller-outline" size={18} color={MatchdayTheme.colors.blue800} />
             </View>
-            <Ionicons name="game-controller-outline" size={18} color={MatchdayTheme.colors.blue800} />
+            <View style={s.previewActions}>
+              {previewEvents.map((item) => (
+                <Pressable key={item.type} style={s.previewButton} onPress={() => previewGamification(item.type)}>
+                  <Image source={previewAssets[item.type]} style={s.previewMascot} contentFit="contain" />
+                  <Text style={s.previewButtonText}>{item.label}</Text>
+                </Pressable>
+              ))}
+            </View>
           </View>
-          <View style={s.previewActions}>
-            {previewEvents.map((item) => (
-              <Pressable key={item.type} style={s.previewButton} onPress={() => previewGamification(item.type)}>
-                <Image source={previewAssets[item.type]} style={s.previewMascot} contentFit="contain" />
-                <Text style={s.previewButtonText}>{item.label}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
+        ) : null}
 
         {loading ? (
           <View style={s.loadingBlock}>

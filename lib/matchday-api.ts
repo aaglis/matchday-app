@@ -266,6 +266,21 @@ export function verifyEmail(token: string) {
   return apiRequest<{ status: string } | null>(`/auth/verify-email?token=${encodeURIComponent(token)}`, { method: 'GET' }, true);
 }
 
+export function requestPasswordReset(email: string) {
+  // Backend builds the reset link (web + app deep-link) from the token, so redirectTo is not needed here.
+  return apiRequest<{ status?: boolean } | null>('/auth/request-password-reset', {
+    body: { email },
+    method: 'POST',
+  }, true);
+}
+
+export function resetPassword(payload: { token: string; newPassword: string }) {
+  return apiRequest<{ status?: boolean } | null>('/auth/reset-password', {
+    body: payload,
+    method: 'POST',
+  }, true);
+}
+
 export function listOrganizations() {
   return apiRequest<Organization[]>('/auth/organization/list', { method: 'GET' });
 }
